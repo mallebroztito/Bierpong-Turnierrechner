@@ -3,8 +3,41 @@ import pandas as pd
 from fpdf import FPDF
 import base64
 import tempfile
+import json
+import os
 
-st.title("🍻 TBV Bierpong Turnierrechner")
+SAVE_FILE = "turnierstand.json"
+
+st.title("🍻 Bierpong Turnier - Tabellenrechner")
+
+# Funktion zum Speichern des Turnierstands
+def speichere_daten():
+    daten = {
+        "teamnamen": st.session_state.teamnamen,
+        "tabelle": st.session_state.tabelle,
+        "spiele": st.session_state.spiele,
+        "ergebnisse": st.session_state.ergebnisse,
+        "teams_festgelegt": st.session_state.teams_festgelegt
+    }
+    with open(SAVE_FILE, "w") as f:
+        json.dump(daten, f)
+
+# Funktion zum Laden gespeicherter Daten
+def lade_daten():
+    if os.path.exists(SAVE_FILE):
+        with open(SAVE_FILE, "r") as f:
+            daten = json.load(f)
+            st.session_state.teamnamen = daten["teamnamen"]
+            st.session_state.tabelle = daten["tabelle"]
+            st.session_state.spiele = [tuple(sp) for sp in daten["spiele"]]
+            st.session_state.ergebnisse = daten["ergebnisse"]
+            st.session_state.teams_festgelegt = daten["teams_festgelegt"]
+            st.session_state.teams = st.session_state.teamnamen
+
+# Laden bei Start
+if "geladen" not in st.session_state:
+    lade_daten()
+    st.session_state.geladen = True
 
 # Teamnamen festlegen
 if "teams_festgelegt" not in st.session_state:
@@ -32,18 +65,47 @@ if "tabelle" not in st.session_state:
         (teams[0], teams[4]),
         (teams[1], teams[2]),
         (teams[0], teams[3]),
-        (teams[1], teams[3]),
+        (teams[1], teams[4]),
         (teams[0], teams[2]),
         (teams[3], teams[4]),
-        (teams[1], teams[4]),
+        (teams[1], teams[3]),
         (teams[2], teams[4])
     ]
     st.session_state.ergebnisse = []
 
+# Anzeige nächstes und übernächstes Spiel
+offene_spiele = [spiel for spiel in st.session_state.spiele if spiel not in [e["spiel"] for e in st.session_state.ergebnisse]]
+if offene_spiele:
+    naechstes = offene_spiele[0]
+    st.info(f"🎯 **Nächstes Spiel:** {naechstes[0]} vs {naechstes[1]}")
+    if len(offene_spiele) > 1:
+        darauf = offene_spiele[1]
+        st.info(f"🕒 **Danach:** {darauf[0]} vs {darauf[1]}")
+else:
+    st.success("✅ Alle Spiele abgeschlossen!")
+
+# Spielplan-Anzeige
+st.subheader("📋 Spielplan")
+spielplan_data = []
+for spiel in st.session_state.spiele:
+    eintrag = next((e for e in st.session_state.ergebnisse if e["spiel"] == spiel), None)
+    if eintrag:
+        team1, team2 = spiel
+        ergebnistext = {
+            "s": f"{team1} gewinnt ({eintrag['b1']}:{eintrag['b2']})",
+            "sv": f"{team1} gewinnt n. Verl. ({eintrag['b1']}:{eintrag['b2']})",
+            "nv": f"{team2} gewinnt n. Verl. ({eintrag['b1']}:{eintrag['b2']})",
+            "n": f"{team2} gewinnt ({eintrag['b1']}:{eintrag['b2']})",
+        }[eintrag["ergebnis"]]
+        spielplan_data.append((team1, team2, ergebnistext))
+    else:
+        spielplan_data.append((spiel[0], spiel[1], "noch offen"))
+spielplan_df = pd.DataFrame(spielplan_data, columns=["Team 1", "Team 2", "Ergebnis"])
+st.dataframe(spielplan_df, use_container_width=True)
+
 # Ergebnis-Eingabe
 with st.form("ergebnis_form"):
     st.subheader("Spiel eintragen")
-    offene_spiele = [spiel for spiel in st.session_state.spiele if spiel not in [e["spiel"] for e in st.session_state.ergebnisse]]
 
     if offene_spiele:
         aktuelles_spiel = offene_spiele[0]
@@ -78,6 +140,7 @@ with st.form("ergebnis_form"):
             st.session_state.tabelle[team1]["Spiele"] += 1
             st.session_state.tabelle[team2]["Spiele"] += 1
             st.session_state.ergebnisse.append({"spiel": aktuelles_spiel, "b1": b1, "b2": b2, "ergebnis": ergebnis})
+            speichere_daten()
             st.success(f"Ergebnis für {team1} vs {team2} eingetragen!")
             st.rerun()
     else:
@@ -104,6 +167,11 @@ st.markdown("""
 🟩 Platz 1 = Finale  
 🟨 Platz 2–3 = Halbfinale
 """)
+
+# Manuelles Speichern
+if st.button("💾 Spielstand manuell speichern"):
+    speichere_daten()
+    st.success("Spielstand gespeichert!")
 
 # PDF Export Funktion
 def export_to_pdf(dataframe):
@@ -143,7 +211,9 @@ if st.button("📄 Tabelle als PDF exportieren"):
 
 # Reset-Knopf
 if st.button("🔁 Turnier zurücksetzen"):
-    for key in ["tabelle", "teams_festgelegt", "teamnamen", "spiele", "ergebnisse"]:
+    for key in ["tabelle", "teams_festgelegt", "teamnamen", "spiele", "ergebnisse", "geladen"]:
         if key in st.session_state:
             del st.session_state[key]
+    if os.path.exists(SAVE_FILE):
+        os.remove(SAVE_FILE)
     st.rerun()
